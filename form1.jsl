@@ -1,0 +1,366 @@
+// пхек мускат
+// ммм, где ты мой дружок пирожок "Мускат с кефиром^_+"
+
+import System.*;
+import System.Drawing.*;
+import System.Windows.Forms.*;
+import System.Collections.Generic.*;
+
+public class Form1 extends Form
+{
+	// ---- Внутренние структуры полония (208, а не распиареного 210) ----
+	class Vector3
+	{
+		public double x, y, z;
+		public Vector3(double x, double y, double z)
+		{ this.x = x; this.y = y; this.z = z; }
+	}
+
+	class ProjectedPoint
+	{
+		public int sx, sy;
+		public ProjectedPoint(int sx, int sy)
+		{ this.sx = sx; this.sy = sy; }
+	}
+
+	// ---- Данные куба (8 вершин, 10 часов в холодильнике) ----
+	private Vector3[] vertices;
+	private int[,] triangles; // Каждый треугольник - один человек делает вдох
+	private Vector3[] normals; // бурмалда для освещения
+
+	// Углы поворота чего-то, а кстати чего нафиг
+	private double rotX = 0, rotY = 0, rotZ = 0;
+
+	// Параметры камеры (тюремной)
+	private double fov = 256;
+	private double camDist = 5.0;
+
+	// Направление света (ой, Света, с большой буквы так как имя, или нет?...)
+	private Vector3 lightDir = new Vector3(0, 0, -1);
+
+	// Буферы для рисования надписей "Пхек мускат" на стене школы
+	private Bitmap backBuffer;
+	private Graphics gfx;
+
+	// Таймер распада полония-211
+	private Timer timer;
+
+	// Генератор случайных цветов для веселья
+	private Random rnd = new Random();
+
+	public Form1()
+	{
+		// Настройки формы
+		this.set_Text("баговый 3D движок на J#");
+		this.set_Size(new Size(800, 600));
+		this.set_DoubleBuffered(true);
+		this.set_StartPosition(FormStartPosition.CenterScreen);
+
+		// Инициализация куба (что, Куба, страна или нет, блин забыл, щас у T3232 спрошу)
+		InitCube();
+
+		// Создание буфера (чего, обмена, или он переполнился, че блин?)
+		backBuffer = new Bitmap(this.get_ClientSize().get_Width(),
+								this.get_ClientSize().get_Height());
+		gfx = Graphics.FromImage(backBuffer);
+
+		// Запуск таймера заражения лучевой болезнью
+		timer = new Timer();
+		timer.add_Tick(new EventHandler(this.OnTick));
+		timer.set_Interval(16); // ~60 FPS
+		timer.set_Enabled(true);
+	}
+
+	private void InitCube()
+	{
+		// 8 вершин куба (центр в 0, размер 2)
+		vertices = new Vector3[] {
+            new Vector3(-1, -1, -1), // 0
+            new Vector3( 1, -1, -1), // 1
+            new Vector3( 1,  1, -1), // 2
+            new Vector3(-1,  1, -1), // 3
+            new Vector3(-1, -1,  1), // 4
+            new Vector3( 1, -1,  1), // 5
+            new Vector3( 1,  1,  1), // 6
+            new Vector3(-1,  1,  1)  // 7
+        };
+
+		// Треугольники (12 треугольников = 6 граней по 2 треугольника)
+		triangles = new int[,] {
+            // Задняя грань (Z = -1)
+            {0, 1, 2}, {0, 2, 3},
+            // Передняя грань (Z = 1)
+            {4, 6, 5}, {4, 7, 6},
+            // Левая грань (X = -1)
+            {0, 3, 7}, {0, 7, 4},
+            // Правая грань (X = 1)
+            {1, 5, 6}, {1, 6, 2},
+            // Нижняя грань (Y = -1)
+            {0, 5, 1}, {0, 4, 5},
+            // Верхняя грань (Y = 1)
+            {3, 2, 6}, {3, 6, 7}
+        };
+
+		// Нормали для каждой грани (для освещения)
+		normals = new Vector3[] {
+            new Vector3(0, 0, -1),  // Задняя
+            new Vector3(0, 0, 1),   // Передняя
+            new Vector3(-1, 0, 0),  // Левая
+            new Vector3(1, 0, 0),   // Правая
+            new Vector3(0, -1, 0),  // Нижняя
+            new Vector3(0, 1, 0)    // Верхняя
+        };
+	}
+
+	// ---- Поворот точки в 3D ----
+	private Vector3 Rotate(Vector3 v)
+	{
+		double x = v.x, y = v.y, z = v.z;
+
+		// Вращение по X
+		double cosX = System.Math.Cos(rotX);
+		double sinX = System.Math.Sin(rotX);
+		double y1 = y * cosX - z * sinX;
+		double z1 = y * sinX + z * cosX;
+		y = y1; z = z1;
+
+		// Вращение по Y
+		double cosY = System.Math.Cos(rotY);
+		double sinY = System.Math.Sin(rotY);
+		double x1 = x * cosY + z * sinY;
+		double z2 = -x * sinY + z * cosY;
+		x = x1; z = z2;
+
+		// Вращение по Z
+		double cosZ = System.Math.Cos(rotZ);
+		double sinZ = System.Math.Sin(rotZ);
+		double x2 = x * cosZ - y * sinZ;
+		double y2 = x * sinZ + y * cosZ;
+		x = x2; y = y2;
+
+		return new Vector3(x, y, z);
+	}
+
+	// ---- Поворот нормали (без трансляции) ----
+	private Vector3 RotateNormal(Vector3 v)
+	{
+		// То же самое, что Rotate, но без смещения
+		double x = v.x, y = v.y, z = v.z;
+
+		double cosX = System.Math.Cos(rotX);
+		double sinX = System.Math.Sin(rotX);
+		double y1 = y * cosX - z * sinX;
+		double z1 = y * sinX + z * cosX;
+		y = y1; z = z1;
+
+		double cosY = System.Math.Cos(rotY);
+		double sinY = System.Math.Sin(rotY);
+		double x1 = x * cosY + z * sinY;
+		double z2 = -x * sinY + z * cosY;
+		x = x1; z = z2;
+
+		double cosZ = System.Math.Cos(rotZ);
+		double sinZ = System.Math.Sin(rotZ);
+		double x2 = x * cosZ - y * sinZ;
+		double y2 = x * sinZ + y * cosZ;
+		x = x2; y = y2;
+
+		return new Vector3(x, y, z);
+	}
+
+	// ---- Перспективная проекция ----
+	private ProjectedPoint Project(Vector3 v)
+	{
+		double z = v.z + camDist;
+		if (z < 0.1) z = 0.1;
+
+		double scale = fov / z;
+		int sx = (int)(v.x * scale) + this.get_ClientSize().get_Width() / 2;
+		int sy = (int)(-v.y * scale) + this.get_ClientSize().get_Height() / 2;
+		return new ProjectedPoint(sx, sy);
+	}
+
+	// ---- Вычисление освещения для грани ----
+	private double CalculateLight(Vector3 normal)
+	{
+		// Нормализуем нормаль
+		double len = System.Math.Sqrt(normal.x * normal.x +
+									  normal.y * normal.y +
+									  normal.z * normal.z);
+		if (len == 0) return 0.5;
+
+		double nx = normal.x / len;
+		double ny = normal.y / len;
+		double nz = normal.z / len;
+
+		// Нормализуем направление света
+		double lLen = System.Math.Sqrt(lightDir.x * lightDir.x +
+									   lightDir.y * lightDir.y +
+									   lightDir.z * lightDir.z);
+		double lx = lightDir.x / lLen;
+		double ly = lightDir.y / lLen;
+		double lz = lightDir.z / lLen;
+
+		// Скалярное произведение (косинус угла)
+		double dot = nx * lx + ny * ly + nz * lz;
+
+		// Ограничиваем от 0.2 до 1.0 (чтобы тени не были совсем чёрными)
+		return System.Math.Max(0.2, System.Math.Min(1.0, dot));
+	}
+
+	// ---- Отрисовка треугольника с заливкой ----
+	private void DrawTriangle(ProjectedPoint p1, ProjectedPoint p2, ProjectedPoint p3, Color color)
+	{
+		// Создаём массив точек
+		Point[] points = new Point[] {
+            new Point(p1.sx, p1.sy),
+            new Point(p2.sx, p2.sy),
+            new Point(p3.sx, p3.sy)
+        };
+
+		// Рисуем залитый треугольник
+		Brush brush = new SolidBrush(color);
+		gfx.FillPolygon(brush, points);
+
+		// Рисуем обводку (чтобы было видно грани)
+		Pen pen = new Pen(Color.FromArgb(50, 50, 50), 1);
+		gfx.DrawPolygon(pen, points);
+	}
+
+	// ---- Отрисовка кадра ----
+	private void RenderFrame()
+	{
+		// Очистка
+		gfx.Clear(Color.FromArgb(30, 30, 40));
+
+		// 1. Поворот всех вершин
+		Vector3[] rotated = new Vector3[vertices.length];
+		for (int i = 0; i < vertices.length; i++)
+		{
+			rotated[i] = Rotate(vertices[i]);
+		}
+
+		// 2. Проекция на экран
+		ProjectedPoint[] projected = new ProjectedPoint[rotated.length];
+		for (int i = 0; i < rotated.length; i++)
+		{
+			projected[i] = Project(rotated[i]);
+		}
+
+		// 3. Поворот нормалей
+		Vector3[] rotatedNormals = new Vector3[normals.length];
+		for (int i = 0; i < normals.length; i++)
+		{
+			rotatedNormals[i] = RotateNormal(normals[i]);
+		}
+
+		// 4. Рисуем каждый треугольник
+		// Сначала вычисляем центр каждого треугольника для сортировки (Z-буфер на коленке)
+		double[] depths = new double[triangles.GetLength(0)/3];
+		int[] triIndices = new int[triangles.GetLength(0)/3];
+
+		for (int i = 0; i < triangles.GetLength(0); i += 3)
+		{
+			int idx = i / 3;
+
+			// Получаем вершины треугольника
+			int i1 = triangles[i, 0];
+			int i2 = triangles[i, 1];
+			int i3 = triangles[i, 2];
+
+			// Средняя глубина (Z-координата после поворота)
+			double avgZ = (rotated[i1].z + rotated[i2].z + rotated[i3].z) / 3.0;
+			depths[idx] = avgZ;
+			triIndices[idx] = i;
+		}
+
+		// Простая сортировка пузырьком по глубине (от дальних к ближним)
+		for (int i = 0; i < triIndices.length - 1; i++)
+		{
+			for (int j = 0; j < triIndices.length - i - 1; j++)
+			{
+				if (depths[j] > depths[j + 1])
+				{
+					// Меняем местами
+					double tempD = depths[j];
+					depths[j] = depths[j + 1];
+					depths[j + 1] = tempD;
+
+					int tempI = triIndices[j];
+					triIndices[j] = triIndices[j + 1];
+					triIndices[j + 1] = tempI;
+				}
+			}
+		}
+
+		// Рисуем треугольники в порядке от дальних к ближним
+		for (int t = 0; t < triIndices.length; t++)
+		{
+			int i = triIndices[t];
+			int normalIdx = i / 3; // Номер грани (0-5)
+
+			// Получаем вершины треугольника
+			int i1 = triangles[i, 0];
+			int i2 = triangles[i, 1];
+			int i3 = triangles[i, 2];
+
+			// Вычисляем освещение для этой грани
+			double light = CalculateLight(rotatedNormals[normalIdx]);
+
+			// Определяем цвет грани (каждая грань имеет свой базовый цвет)
+			int baseR = 0, baseG = 0, baseB = 0;
+
+			// Разные цвета для разных граней (для красоты)
+			switch (normalIdx)
+			{
+				case 0: baseR = 200; baseG = 50; baseB = 50; break; // Задняя - красная
+				case 1: baseR = 50; baseG = 200; baseB = 50; break; // Передняя - зелёная
+				case 2: baseR = 50; baseG = 50; baseB = 200; break; // Левая - синяя
+				case 3: baseR = 200; baseG = 200; baseB = 50; break; // Правая - жёлтая
+				case 4: baseR = 200; baseG = 50; baseB = 200; break; // Нижняя - пурпурная
+				case 5: baseR = 50; baseG = 200; baseB = 200; break; // Верхняя - голубая
+			}
+
+			// Применяем освещение
+			int r = (int)(baseR * light);
+			int g = (int)(baseG * light);
+			int b = (int)(baseB * light);
+
+			// Ограничиваем значения
+			r = System.Math.Max(0, System.Math.Min(255, r));
+			g = System.Math.Max(0, System.Math.Min(255, g));
+			b = System.Math.Max(0, System.Math.Min(255, b));
+
+			Color color = Color.FromArgb(r, g, b);
+
+			// Рисуем треугольник
+			DrawTriangle(projected[i1], projected[i2], projected[i3], color);
+		}
+
+		// 5. Вывод на экран
+		this.CreateGraphics().DrawImage(backBuffer, 0, 0);
+	}
+
+	// ---- Таймер - обновление кадра ----
+	private void OnTick(Object sender, EventArgs e)
+	{
+		// Меняем углы для вращения
+		rotX += 0.015;
+		rotY += 0.02;
+		rotZ += 0.01;
+
+		RenderFrame();
+	}
+
+	// ---- Обработка закрытия формы ----
+	private void Form1_Closed(Object sender, EventArgs e)
+	{
+		if (timer != null)
+		{
+			timer.set_Enabled(false);
+			timer.Dispose();
+		}
+		if (gfx != null) gfx.Dispose();
+		if (backBuffer != null) backBuffer.Dispose();
+	}
+}
